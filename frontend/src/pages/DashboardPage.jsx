@@ -25,6 +25,54 @@ function prettyDateTime(value) {
   }).format(date);
 }
 
+function ApprovalJourney({ request: leave, actions, role }) {
+  const duration = Math.round((new Date(leave.to_date).getTime() - new Date(leave.from_date).getTime()) / 86400000) + 1;
+  const needsHod = duration > 3 || actions.some((action) => action.stage === 'HOD');
+  const latestInfoRequest = [...actions].reverse().find((action) => action.decision === 'INFO_REQUESTED');
+  const rejection = [...actions].reverse().find((action) => action.decision === 'REJECTED');
+  const managerApproved = actions.some((action) => action.stage === 'MANAGER' && action.decision === 'APPROVED')
+    || leave.status === 'PENDING_HOD'
+    || actions.some((action) => action.stage === 'HOD');
+  const waitingStage = leave.status === 'NEEDS_INFORMATION' ? latestInfoRequest?.stage : null;
+  const waitingLabel = role === 'EMPLOYEE' ? 'Waiting for your response' : 'Waiting for employee response';
+  let managerState = 'Not started';
+  if (leave.status === 'PENDING_MANAGER') managerState = 'In review';
+  else if (waitingStage === 'MANAGER') managerState = waitingLabel;
+  else if (rejection?.stage === 'MANAGER' && leave.status === 'REJECTED') managerState = 'Rejected';
+  else if (managerApproved || leave.status === 'APPROVED') managerState = 'Approved';
+
+  let hodState = 'Not started';
+  if (leave.status === 'PENDING_HOD') hodState = 'In review';
+  else if (waitingStage === 'HOD') hodState = waitingLabel;
+  else if (rejection?.stage === 'HOD' && leave.status === 'REJECTED') hodState = 'Rejected';
+  else if (leave.status === 'APPROVED' && needsHod) hodState = 'Approved';
+  else if (leave.status === 'REJECTED' && rejection?.stage === 'MANAGER') hodState = 'Not required';
+
+  const finalState = leave.status === 'APPROVED' ? 'Approved' : leave.status === 'REJECTED' ? 'Rejected' : 'Pending';
+  const steps = [
+    { label: 'Submitted', state: 'Complete' },
+    { label: 'Manager review', state: managerState },
+    ...(needsHod ? [{ label: 'HOD review', state: hodState }] : []),
+    { label: 'Final decision', state: finalState },
+  ];
+
+  return <section aria-label="Approval journey" className="rounded-md border border-line bg-slate-50 p-4">
+    <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Approval journey</h4>
+    <ol className="mt-4 grid gap-3 sm:grid-cols-2">
+      {steps.map((step, index) => {
+        const active = step.state === 'In review' || step.state === waitingLabel;
+        const complete = step.state === 'Complete' || step.state === 'Approved';
+        const rejected = step.state === 'Rejected';
+        return <li key={step.label} className="flex items-start gap-3">
+          <span aria-hidden="true" className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${rejected ? 'border-red-200 bg-red-50 text-red-800' : active ? 'border-orange-300 bg-orange-50 text-orange-800' : complete ? 'border-green-200 bg-green-50 text-green-800' : 'border-line bg-white text-muted'}`}>{index + 1}</span>
+          <div><p className="text-sm font-medium text-ink">{step.label}</p><p className="mt-0.5 text-xs text-muted">{step.state}</p></div>
+        </li>;
+      })}
+    </ol>
+    {leave.status === 'NEEDS_INFORMATION' && !waitingStage && <p className="mt-3 text-xs text-muted">{waitingLabel}. The review stage is unavailable.</p>}
+  </section>;
+}
+
 function ActivityTimeline({ actions, responses }) {
   const decisionLabels = { APPROVED: 'Approved', REJECTED: 'Rejected', INFO_REQUESTED: 'Requested more information' };
   const entries = [
@@ -321,6 +369,7 @@ function RequestDetails({ id, role, onClose, onChanged }) {
       {!row && !error && <p role="status" className="text-sm text-muted">Loading request…</p>}
       {row && <>
         <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-ink">{row.title || 'Leave request'}</h3><p className="mt-1 text-sm text-muted">{row.employee_name} · {row.category_code ? row.category_code.toLowerCase() + ' leave' : 'Type not recorded'}</p><p className="mt-1 text-sm text-muted">{prettyDate(row.from_date)} – {prettyDate(row.to_date)}</p></div><Status value={row.status} /></div>
+        <ApprovalJourney request={row} actions={details.actions} role={role} />
         <div><h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Reason</h4><p className="mt-2 whitespace-pre-wrap text-sm text-ink">{row.reason}</p></div>
         <div><h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Attachments</h4>{details.attachments.length ? details.attachments.map((file) => <button key={file.id} type="button" onClick={() => setPreview(file)} className="mt-2 flex items-center gap-2 text-left text-sm text-link hover:underline"><FileText size={16} />{file.filename}<span className="text-xs text-muted">Preview</span></button>) : <p className="mt-2 text-sm text-muted">No attachments.</p>}</div>
         <ActivityTimeline actions={details.actions} responses={details.responses} />
