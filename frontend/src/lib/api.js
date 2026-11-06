@@ -6,7 +6,7 @@ export function setAccessToken(token) {
   accessToken = token;
 }
 
-async function send(path, { method = 'GET', body, authenticated = false, binary = false } = {}) {
+async function send(path, { method = 'GET', body, authenticated = false, binary = false, includeMeta = false } = {}) {
   if (!baseUrl) throw new Error('The frontend API is not configured.');
   const headers = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -25,7 +25,7 @@ async function send(path, { method = 'GET', body, authenticated = false, binary 
       code: payload?.error?.code,
     });
   }
-  return binary ? payload : payload?.data ?? null;
+  return binary || includeMeta ? payload : payload?.data ?? null;
 }
 
 export function refreshSession() {

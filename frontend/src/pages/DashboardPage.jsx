@@ -17,6 +17,44 @@ function prettyDate(value) {
   return new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
+function prettyDateTime(value) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return 'Date unavailable';
+  return new Intl.DateTimeFormat(undefined, {
+    day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  }).format(date);
+}
+
+function ActivityTimeline({ actions, responses }) {
+  const decisionLabels = { APPROVED: 'Approved', REJECTED: 'Rejected', INFO_REQUESTED: 'Requested more information' };
+  const entries = [
+    ...actions.map((item) => ({
+      key: `action-${item.id}`, timestamp: item.created_at,
+      heading: `${item.stage === 'HOD' ? 'HOD' : 'Manager'} · ${decisionLabels[item.decision] || item.decision}`,
+      text: item.comment,
+    })),
+    ...responses.map((item) => ({
+      key: `response-${item.id}`, timestamp: item.created_at,
+      heading: 'Employee · Response provided', text: item.response,
+    })),
+  ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  if (!entries.length) return null;
+  return <section aria-label="Request activity">
+    <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Activity timeline</h4>
+    <ol className="mt-4 border-l border-line">
+      {entries.map((entry) => <li key={entry.key} className="relative pb-5 pl-5 last:pb-0">
+        <span aria-hidden="true" className="absolute -left-[5px] top-1.5 h-2.5 w-2.5 rounded-full border border-brand-orange bg-white" />
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <p className="text-sm font-semibold text-ink">{entry.heading}</p>
+          <time dateTime={entry.timestamp} className="text-xs text-muted">{prettyDateTime(entry.timestamp)}</time>
+        </div>
+        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-muted">{entry.text}</p>
+      </li>)}
+    </ol>
+  </section>;
+}
+
 function Status({ value }) {
   const color = value === 'APPROVED' ? 'bg-green-50 text-green-800' : value === 'REJECTED' ? 'bg-red-50 text-red-800' : value === 'NEEDS_INFORMATION' ? 'bg-amber-50 text-amber-800' : 'bg-blue-50 text-blue-800';
   return <span className={`inline-flex rounded-md px-2.5 py-1 text-xs font-medium ${color}`}>{labels[value] || value}</span>;
@@ -285,7 +323,7 @@ function RequestDetails({ id, role, onClose, onChanged }) {
         <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-ink">{row.title || 'Leave request'}</h3><p className="mt-1 text-sm text-muted">{row.employee_name} · {row.category_code ? row.category_code.toLowerCase() + ' leave' : 'Type not recorded'}</p><p className="mt-1 text-sm text-muted">{prettyDate(row.from_date)} – {prettyDate(row.to_date)}</p></div><Status value={row.status} /></div>
         <div><h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Reason</h4><p className="mt-2 whitespace-pre-wrap text-sm text-ink">{row.reason}</p></div>
         <div><h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Attachments</h4>{details.attachments.length ? details.attachments.map((file) => <button key={file.id} type="button" onClick={() => setPreview(file)} className="mt-2 flex items-center gap-2 text-left text-sm text-link hover:underline"><FileText size={16} />{file.filename}<span className="text-xs text-muted">Preview</span></button>) : <p className="mt-2 text-sm text-muted">No attachments.</p>}</div>
-        {(details.actions.length > 0 || details.responses.length > 0) && <div><h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Activity</h4><div className="mt-2 space-y-2 text-sm">{details.actions.map((action, index) => <p key={`a${index}`}><strong>{action.stage === 'HOD' ? 'HOD' : 'Manager'} · {labels[action.decision] || action.decision.replace('_', ' ')}</strong><br />{action.comment}</p>)}{details.responses.map((entry, index) => <p key={`r${index}`}><strong>Employee response</strong><br />{entry.response}</p>)}</div></div>}
+        <ActivityTimeline actions={details.actions} responses={details.responses} />
         {(mayReview || mayRespond) && <form onSubmit={act} className="space-y-4 border-t border-line pt-5">
           {mayReview && <label className="block text-sm font-medium">Decision<select required className={field} value={decision} onChange={(event) => setDecision(event.target.value)}><option value="">Select a decision</option><option value="APPROVED">Approve</option><option value="REJECTED">Reject</option><option value="INFO_REQUESTED">Request more information</option></select></label>}
           <label className="block text-sm font-medium">{mayRespond ? 'Your response' : 'Comment'}<textarea required maxLength="2000" rows="3" className={field} value={comment} onChange={(event) => setComment(event.target.value)} /></label>
@@ -318,18 +356,63 @@ export default function DashboardPage() {
   const [view, setView] = useState('overview');
   const [modal, setModal] = useState(null);
   const [mobileNav, setMobileNav] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const accountMenu = useRef(null);
+  const accountButton = useRef(null);
   const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [sort, setSort] = useState('submitted');
+  const [direction, setDirection] = useState('desc');
+  const requestSequence = useRef(0);
   const [balances, setBalances] = useState([]);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const [balanceError, setBalanceError] = useState('');
   const balanceYear = new Date().getFullYear();
 
+  useEffect(() => {
+    if (!accountOpen) return undefined;
+    function dismiss(event) {
+      if (!accountMenu.current?.contains(event.target)) setAccountOpen(false);
+    }
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        setAccountOpen(false);
+        accountButton.current?.focus();
+      }
+    }
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [accountOpen]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true); setError('');
-    try { setRows(await request(`/leave-requests?page=${page}&limit=20`, { authenticated: true })); }
-    catch (err) { if (err.status === 401) clearSession(); else setError(err.message || 'Could not load requests.'); }
-    finally { setLoading(false); }
-  }, [page, clearSession]);
+    const query = new URLSearchParams({
+      page: String(page), limit: '20', scope: view === 'history' ? 'history' : 'current',
+      search: debouncedSearch, status: statusFilter, category: categoryFilter, sort, direction,
+    });
+    try {
+      const result = await request(`/leave-requests?${query}`, { authenticated: true, includeMeta: true });
+      if (sequence === requestSequence.current) { setRows(result.data); setTotal(result.meta.pagination.total); }
+    } catch (err) {
+      if (sequence !== requestSequence.current) return;
+      if (err.status === 401) clearSession(); else setError(err.message || 'Could not load requests.');
+    } finally { if (sequence === requestSequence.current) setLoading(false); }
+  }, [page, view, debouncedSearch, statusFilter, categoryFilter, sort, direction, clearSession]);
   useEffect(() => { load(); }, [load]);
 
   const loadBalances = useCallback(async () => {
@@ -345,20 +428,49 @@ export default function DashboardPage() {
   useEffect(() => { loadBalances(); }, [loadBalances]);
 
   function saved(message) { setModal(null); setNotice(message); load(); loadBalances(); }
-  async function logout() { try { await signOut(); } catch { setError('Could not sign out. Try again.'); } }
-  const nav = [{ key: 'overview', label: 'Overview', icon: LayoutDashboard }, { key: 'requests', label: user.role === 'EMPLOYEE' ? 'My requests' : 'Requests to review', icon: ClipboardList }];
-  const title = view === 'overview' ? 'Overview' : user.role === 'EMPLOYEE' ? 'My requests' : 'Requests to review';
+  async function logout() {
+    setSigningOut(true);
+    try { await signOut(); }
+    catch { setError('Could not sign out. Try again.'); setAccountOpen(false); setSigningOut(false); }
+  }
+  const nav = [
+    { key: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { key: 'requests', label: user.role === 'EMPLOYEE' ? 'My requests' : 'Requests to review', icon: ClipboardList },
+    ...(user.role === 'EMPLOYEE' ? [] : [{ key: 'history', label: 'Past requests', icon: FileText }]),
+  ];
+  const title = view === 'overview' ? 'Overview' : view === 'history' ? 'Past requests' : user.role === 'EMPLOYEE' ? 'My requests' : 'Requests to review';
+  useEffect(() => {
+    document.title = `${title} | Leave Tracker`;
+  }, [title]);
+  function changeView(key) {
+    setView(key); setPage(1); setSearch(''); setDebouncedSearch(''); setStatusFilter(''); setCategoryFilter('');
+    setMobileNav(false);
+  }
   return <div className="dashboard-shell min-h-screen bg-canvas text-ink lg:flex">
     {mobileNav && <button className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
     <aside className={`dashboard-sidebar fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-line bg-white transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${mobileNav ? 'translate-x-0' : '-translate-x-full'}`}>
       <div className="dashboard-brand border-b border-line px-6 py-6"><div className="brand-mark" aria-hidden="true"><CalendarDays size={19} /></div><div><div className="text-lg font-semibold tracking-tight">Leave Tracker<span className="text-brand-orange">.</span></div><p className="mt-1 text-xs text-muted">Leave management portal</p></div></div>
-      <div className="px-4 pt-7"><p className="px-3 text-xs font-semibold uppercase tracking-wide text-muted">Workspace</p><nav aria-label="Main navigation" className="dashboard-nav mt-3 space-y-1">{nav.map(({ key, label, icon: Icon }) => <button key={key} type="button" onClick={() => { setView(key); setMobileNav(false); }} aria-current={view === key ? 'page' : undefined} className={`flex min-h-11 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium ${view === key ? 'bg-orange-50 text-orange-800' : 'text-muted hover:bg-canvas hover:text-ink'}`}><Icon size={18} />{label}</button>)}</nav></div>
-      <div className="mt-auto border-t border-line p-4"><button onClick={logout} className="flex min-h-11 w-full items-center gap-3 rounded-md px-3 text-sm text-muted hover:bg-canvas hover:text-ink"><LogOut size={18} />Sign out</button></div>
+      <div className="px-4 pt-7"><p className="px-3 text-xs font-semibold uppercase tracking-wide text-muted">Workspace</p><nav aria-label="Main navigation" className="dashboard-nav mt-3 space-y-1">{nav.map(({ key, label, icon: Icon }) => <button key={key} type="button" onClick={() => changeView(key)} aria-current={view === key ? 'page' : undefined} className={`flex min-h-11 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium ${view === key ? 'bg-orange-50 text-orange-800' : 'text-muted hover:bg-canvas hover:text-ink'}`}><Icon size={18} />{label}</button>)}</nav></div>
+      <div className="mt-auto flex min-h-16 items-center border-t border-line px-4 py-2">
+        <button type="button" onClick={logout} disabled={signingOut} className="flex min-h-11 w-full items-center gap-3 rounded-md px-3 text-sm text-muted hover:bg-canvas hover:text-ink disabled:opacity-60">
+          <LogOut size={18} />{signingOut ? 'Signing out…' : 'Sign out'}
+        </button>
+      </div>
     </aside>
     <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-      <header className="dashboard-topbar flex min-h-20 items-center justify-between gap-4 border-b border-line bg-white px-5 sm:px-8">
+      <header className="dashboard-topbar sticky top-0 z-20 flex min-h-20 items-center justify-between gap-4 border-b border-line bg-white px-5 sm:px-8">
         <div className="flex items-center gap-3"><button type="button" onClick={() => setMobileNav(true)} aria-label="Open navigation" className="rounded-md p-2 lg:hidden"><Menu size={22} /></button><div><p className="text-xs text-muted">Workspace</p><p className="mt-1 text-sm font-semibold">{title}</p></div></div>
-        <div className="flex items-center gap-3"><div className="text-right"><p className="text-sm font-semibold">{user.displayName}</p><p className="text-xs text-muted">{roleNames[user.role]}</p></div><div aria-hidden="true" className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-100 text-sm font-semibold text-orange-800">{user.displayName.slice(0, 1).toUpperCase()}</div></div>
+        <div ref={accountMenu} className="relative flex items-center gap-3">
+          <div className="text-right"><p className="text-sm font-semibold">{user.displayName}</p><p className="text-xs text-muted">{roleNames[user.role]}</p></div>
+          <button ref={accountButton} type="button" aria-label="Account options" aria-expanded={accountOpen} aria-controls="account-menu" onClick={() => setAccountOpen((open) => !open)} className="flex h-11 w-11 items-center justify-center rounded-full bg-orange-100 text-sm font-semibold text-orange-800 hover:bg-orange-200">
+            {user.displayName.slice(0, 1).toUpperCase()}
+          </button>
+          {accountOpen && <div id="account-menu" className="absolute right-0 top-full z-30 mt-2 w-48 rounded-md border border-line bg-white p-1 shadow-md">
+            <button type="button" onClick={logout} disabled={signingOut} className="flex min-h-11 w-full items-center gap-3 rounded-md px-3 text-left text-sm text-muted hover:bg-canvas hover:text-ink disabled:opacity-60">
+              <LogOut size={18} />{signingOut ? 'Signing out…' : 'Sign out'}
+            </button>
+          </div>}
+        </div>
       </header>
       <main className="dashboard-main mx-auto w-full max-w-6xl flex-1 px-5 py-8 sm:px-8">
         <div className="dashboard-heading flex flex-wrap items-start justify-between gap-4"><div><p className="dashboard-eyebrow">LEAVE MANAGEMENT</p><h1 className="text-2xl font-semibold tracking-tight">{title}</h1><p className="mt-2 text-sm text-muted">{user.role === 'EMPLOYEE' ? 'Submit requests and keep track of their progress.' : 'Review leave requests and record your decisions.'}</p></div>{user.role === 'EMPLOYEE' && <button onClick={() => setModal('create')} className={`${button} dashboard-primary`}><Plus size={17} />New request</button>}</div>
@@ -371,12 +483,22 @@ export default function DashboardPage() {
           { label: user.role === 'EMPLOYEE' ? 'Approved' : 'Your role', value: user.role === 'EMPLOYEE' ? rows.filter((row) => row.status === 'APPROVED').length : roleNames[user.role], icon: FileText },
         ].map(({ label, value, icon: Icon }) => <div key={label} className="rounded-lg border border-line bg-white p-5"><div className="flex items-center justify-between text-muted"><p className="text-sm">{label}</p><Icon size={18} /></div><p className="mt-4 text-2xl font-semibold">{loading ? '—' : value}</p><p className="mt-1 text-xs text-muted">Current page</p></div>)}</div>}
         <section className="dashboard-requests mt-8 overflow-hidden rounded-lg border border-line bg-white">
-          <div className="flex items-center justify-between gap-4 border-b border-line px-5 py-4"><div><h2 className="font-semibold">{view === 'overview' ? 'Recent requests' : title}</h2><p className="mt-1 text-xs text-muted">{user.role === 'EMPLOYEE' ? 'Your leave request history' : 'Requests available for your review'}</p></div>{view === 'overview' && <button onClick={() => setView('requests')} className="text-sm font-medium text-link">View all</button>}</div>
-          {loading ? <p role="status" className="p-8 text-center text-sm text-muted">Loading requests…</p> : !rows.length ? <div className="p-10 text-center"><ClipboardList size={26} className="mx-auto text-muted" /><p className="mt-3 text-sm font-medium">No requests yet</p><p className="mt-1 text-sm text-muted">{user.role === 'EMPLOYEE' ? 'Create a request to get started.' : 'Requests awaiting review will appear here.'}</p></div> : <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left text-sm"><thead className="bg-slate-50 text-xs text-muted"><tr><th className="px-5 py-3 font-medium">Request</th><th className="px-5 py-3 font-medium">Dates</th><th className="px-5 py-3 font-medium">Status</th><th className="px-5 py-3 font-medium">Submitted</th><th className="px-5 py-3"><span className="sr-only">View</span></th></tr></thead><tbody>{rows.map((row) => <tr key={row.id} className="border-t border-line hover:bg-slate-50"><td className="px-5 py-4 font-medium">{row.title || 'Leave request'}<div className="mt-1 text-xs font-normal text-muted">{row.employee_name}{row.category_code ? ` · ${row.category_code.toLowerCase()}` : ''}</div></td><td className="px-5 py-4 text-muted">{prettyDate(row.from_date)} – {prettyDate(row.to_date)}</td><td className="px-5 py-4"><Status value={row.status} /></td><td className="px-5 py-4 text-muted">{prettyDate(row.created_at)}</td><td className="px-5 py-4"><button onClick={() => setModal(row.id)} aria-label={`View request from ${row.employee_name}`} className="rounded p-1 text-link hover:bg-orange-50"><ChevronRight size={19} /></button></td></tr>)}</tbody></table></div>}
-          <div className="flex items-center justify-between border-t border-line px-5 py-3 text-sm text-muted"><span>Page {page}</span><div className="flex gap-2"><button disabled={page === 1 || loading} onClick={() => setPage(page - 1)} className={secondary}>Previous</button><button disabled={rows.length < 20 || loading} onClick={() => setPage(page + 1)} className={secondary}>Next</button></div></div>
+          <div className="flex items-center justify-between gap-4 border-b border-line px-5 py-4"><div><h2 className="font-semibold">{view === 'overview' ? 'Recent requests' : title}</h2><p className="mt-1 text-xs text-muted">{view === 'history' ? 'Completed requests' : user.role === 'EMPLOYEE' ? 'Your leave requests' : 'Requests available for your review'}</p></div>{view === 'overview' && <button onClick={() => changeView('requests')} className="text-sm font-medium text-link">View all</button>}</div>
+          <div className="grid gap-3 border-b border-line px-5 py-4 sm:grid-cols-2 lg:grid-cols-5">
+            <label className="text-xs font-medium text-muted">Search<input type="search" maxLength="100" className={field} value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Title, employee or reason" /></label>
+            <label className="text-xs font-medium text-muted">Status<select className={field} value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}><option value="">All statuses</option>{Object.entries(labels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+            <label className="text-xs font-medium text-muted">Leave type<select className={field} value={categoryFilter} onChange={(event) => { setCategoryFilter(event.target.value); setPage(1); }}><option value="">All types</option><option value="CASUAL">Casual leave</option><option value="SICK">Sick leave</option><option value="EARNED">Earned leave</option></select></label>
+            <label className="text-xs font-medium text-muted">Sort by<select className={field} value={sort} onChange={(event) => { setSort(event.target.value); setPage(1); }}><option value="submitted">Submitted</option><option value="title">Request title</option><option value="employee">Employee</option><option value="dates">Start date</option><option value="status">Status</option></select></label>
+            <label className="text-xs font-medium text-muted">Order<select className={field} value={direction} onChange={(event) => { setDirection(event.target.value); setPage(1); }}><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
+          </div>
+          {loading ? <p role="status" className="p-8 text-center text-sm text-muted">Loading requests…</p> : !rows.length ? <div className="p-10 text-center"><ClipboardList size={26} className="mx-auto text-muted" /><p className="mt-3 text-sm font-medium">No matching requests</p><p className="mt-1 text-sm text-muted">Try a different search or filter.</p></div> : <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left text-sm"><thead className="bg-slate-50 text-xs text-muted"><tr><th className="px-5 py-3 font-medium">Request</th><th className="px-5 py-3 font-medium">Dates</th><th className="px-5 py-3 font-medium">Status</th><th className="px-5 py-3 font-medium">Submitted</th><th className="px-5 py-3"><span className="sr-only">View</span></th></tr></thead><tbody>{rows.map((row) => <tr key={row.id} className="border-t border-line hover:bg-slate-50"><td className="px-5 py-4 font-medium">{row.title || 'Leave request'}<div className="mt-1 text-xs font-normal text-muted">{row.employee_name}{row.category_code ? ` · ${row.category_code.toLowerCase()}` : ''}</div></td><td className="px-5 py-4 text-muted">{prettyDate(row.from_date)} – {prettyDate(row.to_date)}</td><td className="px-5 py-4"><Status value={row.status} /></td><td className="px-5 py-4 text-muted">{prettyDate(row.created_at)}</td><td className="px-5 py-4"><button onClick={() => setModal(row.id)} aria-label={`View request from ${row.employee_name}`} className="rounded p-1 text-link hover:bg-orange-50"><ChevronRight size={19} /></button></td></tr>)}</tbody></table></div>}
+          <div className="flex items-center justify-between border-t border-line px-5 py-3 text-sm text-muted"><span>{total} matching requests · Page {page}</span><div className="flex gap-2"><button disabled={page === 1 || loading} onClick={() => setPage(page - 1)} className={secondary}>Previous</button><button disabled={page * 20 >= total || loading} onClick={() => setPage(page + 1)} className={secondary}>Next</button></div></div>
         </section>
       </main>
-      <footer className="dashboard-footer border-t border-line px-5 py-5 text-xs text-muted sm:px-8">Leave Tracker · Employee leave management</footer>
+      <footer className="dashboard-footer flex min-h-16 flex-wrap items-center justify-between gap-3 border-t border-line bg-white px-5 py-3 text-xs text-muted sm:px-8">
+        <span>Leave Tracker · Employee leave management</span>
+        <span className="ml-auto text-right">Abhinav Jain - 2547203</span>
+      </footer>
     </div>
     {modal === 'create' && <CreateRequest onClose={() => setModal(null)} onSaved={saved} />}
     {modal && modal !== 'create' && <RequestDetails id={modal} role={user.role} onClose={() => setModal(null)} onChanged={saved} />}

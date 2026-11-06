@@ -28,13 +28,25 @@ const createBody = z.object({
 }).strip().refine((value) => value.fromDate <= value.toDate);
 const actionBody = z.object({ decision: z.enum(['APPROVED', 'REJECTED', 'INFO_REQUESTED']), comment: z.string().trim().min(1).max(2000) }).strip();
 const responseBody = z.object({ response: z.string().trim().min(1).max(2000), attachments: attachmentList }).strip();
-const listQuery = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(20) }).strip();
+const listQuery = z.object({
+  page: z.coerce.number().int().min(1).max(100000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  scope: z.enum(['current', 'history']).default('current'),
+  search: z.string().trim().max(100).default(''),
+  status: z.enum(['', 'PENDING_MANAGER', 'NEEDS_INFORMATION', 'PENDING_HOD', 'APPROVED', 'REJECTED']).default(''),
+  category: z.enum(['', 'CASUAL', 'SICK', 'EARNED']).default(''),
+  sort: z.enum(['title', 'employee', 'dates', 'status', 'submitted']).default('submitted'),
+  direction: z.enum(['asc', 'desc']).default('desc'),
+}).strip();
 const packet = (data, req) => ({ data, meta: { requestId: req.id } });
 
-function canView(user, row) {
-  return (user.role_code === 'EMPLOYEE' && row.employee_user_id === user.id)
-    || (user.role_code === 'MANAGER' && ['PENDING_MANAGER', 'NEEDS_INFORMATION', 'PENDING_HOD'].includes(row.status))
-    || (user.role_code === 'HOD' && row.status === 'PENDING_HOD');
+async function canView(user, row) {
+  if (user.role_code === 'EMPLOYEE') return row.employee_user_id === user.id;
+  if (user.role_code === 'MANAGER') return true;
+  if (user.role_code !== 'HOD') return false;
+  if (row.status === 'PENDING_HOD') return true;
+  const [actions] = await db.execute("SELECT id FROM approval_actions WHERE leave_request_id = ? AND stage = 'HOD' LIMIT 1", [row.id]);
+  return actions.length > 0;
 }
 
 async function getLeave(connection, requestId, lock = false) {
@@ -71,14 +83,21 @@ router.get('/balances', requireRole('EMPLOYEE'), validate({
   })), req));
 }));
 router.get('/', validate({ body: empty, query: listQuery, params: empty }), asyncHandler(async (req, res) => {
-  const { page, limit } = req.validated.query;
+  const { page, limit, scope, search, status, category, sort, direction } = req.validated.query;
   const user = req.auth;
-  const where = user.role_code === 'EMPLOYEE' ? 'employee_user_id = ?'
-    : user.role_code === 'MANAGER' ? "status IN ('PENDING_MANAGER','NEEDS_INFORMATION','PENDING_HOD')"
-      : user.role_code === 'HOD' ? "status = 'PENDING_HOD'" : '1 = 0';
+  const where = [user.role_code === 'EMPLOYEE' ? 'employee_user_id = ?'
+    : user.role_code === 'MANAGER' ? (scope === 'history' ? "status IN ('APPROVED','REJECTED')" : "status IN ('PENDING_MANAGER','NEEDS_INFORMATION','PENDING_HOD')")
+      : user.role_code === 'HOD' ? (scope === 'history' ? "status IN ('APPROVED','REJECTED') AND EXISTS (SELECT 1 FROM approval_actions a WHERE a.leave_request_id = leave_requests.id AND a.stage = 'HOD')" : "status = 'PENDING_HOD'") : '1 = 0'];
   const values = user.role_code === 'EMPLOYEE' ? [user.id] : [];
-  const [counts] = await db.execute(`SELECT COUNT(*) AS total FROM leave_requests WHERE ${where}`, values);
-  const [rows] = await db.execute(`SELECT id, title, category_code, employee_name, from_date, to_date, reason, status, created_at FROM leave_requests WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`, [...values, limit, (page - 1) * limit]);
+  if (user.role_code === 'EMPLOYEE' && scope === 'history') where.push("status IN ('APPROVED','REJECTED')");
+  if (search) { where.push('(title LIKE ? OR employee_name LIKE ? OR reason LIKE ?)'); values.push(...Array(3).fill(`%${search}%`)); }
+  if (status) { where.push('status = ?'); values.push(status); }
+  if (category) { where.push('category_code = ?'); values.push(category); }
+  const filter = where.map((condition) => `(${condition})`).join(' AND ');
+  const sortColumn = { title: 'title', employee: 'employee_name', dates: 'from_date', status: 'status', submitted: 'created_at' }[sort];
+  const order = direction === 'asc' ? 'ASC' : 'DESC';
+  const [counts] = await db.execute(`SELECT COUNT(*) AS total FROM leave_requests WHERE ${filter}`, values);
+  const [rows] = await db.execute(`SELECT id, title, category_code, employee_name, from_date, to_date, reason, status, created_at FROM leave_requests WHERE ${filter} ORDER BY ${sortColumn} ${order}, id ${order} LIMIT ? OFFSET ?`, [...values, limit, (page - 1) * limit]);
   res.json({ data: rows, meta: { requestId: req.id, pagination: { page, limit, total: counts[0].total } } });
 }));
 
@@ -129,16 +148,16 @@ router.post('/', requireRole('EMPLOYEE'), validate({ body: createBody, query: em
 
 router.get('/:id', validate({ body: empty, query: empty, params: id }), asyncHandler(async (req, res) => {
   const row = await getLeave(db, req.validated.params.id);
-  if (!canView(req.auth, row)) throw httpError(404, 'NOT_FOUND', 'Request not found.');
+  if (!await canView(req.auth, row)) throw httpError(404, 'NOT_FOUND', 'Request not found.');
   const [attachments] = await db.execute('SELECT id, filename, media_type, byte_size FROM leave_attachments WHERE leave_request_id = ?', [row.id]);
-  const [actions] = await db.execute('SELECT stage, decision, comment, created_at FROM approval_actions WHERE leave_request_id = ? ORDER BY created_at', [row.id]);
-  const [responses] = await db.execute('SELECT response, created_at FROM information_responses WHERE leave_request_id = ? ORDER BY created_at', [row.id]);
+  const [actions] = await db.execute('SELECT id, stage, decision, comment, created_at FROM approval_actions WHERE leave_request_id = ? ORDER BY created_at, id', [row.id]);
+  const [responses] = await db.execute('SELECT id, response, created_at FROM information_responses WHERE leave_request_id = ? ORDER BY created_at, id', [row.id]);
   res.json(packet({ request: row, attachments, actions, responses }, req));
 }));
 
 router.get('/:id/attachments/:attachmentId', validate({ body: empty, query: empty, params: attachmentParams }), asyncHandler(async (req, res) => {
   const row = await getLeave(db, req.validated.params.id);
-  if (!canView(req.auth, row)) throw httpError(404, 'NOT_FOUND', 'Request not found.');
+  if (!await canView(req.auth, row)) throw httpError(404, 'NOT_FOUND', 'Request not found.');
   const [files] = await db.execute('SELECT storage_key, media_type FROM leave_attachments WHERE id = ? AND leave_request_id = ?', [req.validated.params.attachmentId, row.id]);
   if (!files.length) throw httpError(404, 'NOT_FOUND', 'Document not found.');
   const bytes = await downloadDocument(files[0].storage_key);
