@@ -1,14 +1,32 @@
 import React, { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext.jsx';
 
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [notice, setNotice] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const { signIn } = useAuth();
+  const navigate = useNavigate();
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
-    setNotice('Sign-in is not available yet. Authentication is still being set up.');
+    const form = new FormData(event.currentTarget);
+    setNotice('');
+    setSubmitting(true);
+    try {
+      await signIn({ email: String(form.get('email')), password: String(form.get('password')), rememberMe });
+      navigate('/dashboard', { replace: true });
+    } catch (error) {
+      if (error.status === 401) setNotice('Email or password is incorrect.');
+      else if (error.status === 429) setNotice('Too many attempts. Please try again later.');
+      else if (error.status === 400) setNotice('Please check your email and password.');
+      else setNotice('Could not connect to the sign-in service. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function handleForgotPassword(event) {
@@ -101,9 +119,10 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            className="min-h-12 w-full rounded-md bg-brand-orange px-4 py-3 text-sm text-white font-semibold text-ink transition-colors hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+            disabled={submitting}
+            className="min-h-12 w-full rounded-md bg-brand-orange px-4 py-3 text-sm font-semibold text-ink transition-colors hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-wait disabled:opacity-60"
           >
-            Log in
+            {submitting ? 'Signing in…' : 'Log in'}
           </button>
         </form>
       </section>

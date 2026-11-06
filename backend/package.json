@@ -7,7 +7,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "db:init": "node init_db.js",
-    "user:create": "node scripts/create-user.js"
+    "user:create": "node scripts/create-user.js",
+    "test:auth": "node --test tests/auth.integration.test.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -19,6 +20,6 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.14.0",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   }
 }
