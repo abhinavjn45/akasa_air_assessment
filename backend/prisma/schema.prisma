@@ -1,0 +1,143 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  EMPLOYEE
+  MANAGER
+  HOD
+}
+
+enum LeaveStatus {
+  PENDING_MANAGER
+  NEEDS_INFORMATION
+  PENDING_HOD
+  APPROVED
+  REJECTED
+}
+
+enum ApprovalStage {
+  MANAGER
+  HOD
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+  INFO_REQUESTED
+}
+
+model User {
+  id                  String                @id @default(uuid()) @db.VarChar(36)
+  email               String                @unique @db.VarChar(254)
+  displayName         String                @db.VarChar(120)
+  passwordHash        String                @db.VarChar(255)
+  role                UserRole
+  active              Boolean               @default(true)
+  failedLoginAttempts Int                   @default(0)
+  lockedUntil         DateTime?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  sessions            RefreshSession[]
+  leaveRequests       LeaveRequest[]        @relation("EmployeeRequests")
+  approvalActions     ApprovalAction[]      @relation("ApprovalActor")
+  attachments         LeaveAttachment[]     @relation("AttachmentUploader")
+  informationReplies  InformationResponse[] @relation("InformationAuthor")
+  auditEvents         AuditEvent[]          @relation("AuditActor")
+}
+
+model RefreshSession {
+  id           String    @id @default(uuid()) @db.VarChar(36)
+  userId       String    @db.VarChar(36)
+  familyId     String    @db.VarChar(36)
+  tokenHash    String    @unique @db.Char(64)
+  rememberMe   Boolean   @default(false)
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?   @db.VarChar(36)
+  createdAt    DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([familyId])
+}
+
+model LeaveRequest {
+  id                   String                @id @default(uuid()) @db.VarChar(36)
+  employeeUserId       String                @db.VarChar(36)
+  employeeName         String                @db.VarChar(120)
+  fromDate             DateTime              @db.Date
+  toDate               DateTime              @db.Date
+  reason               String                @db.Text
+  status               LeaveStatus           @default(PENDING_MANAGER)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  employee             User                  @relation("EmployeeRequests", fields: [employeeUserId], references: [id], onDelete: Restrict)
+  approvalActions      ApprovalAction[]
+  attachments          LeaveAttachment[]
+  informationResponses InformationResponse[]
+  auditEvents          AuditEvent[]
+
+  @@index([employeeUserId, createdAt])
+  @@index([status, createdAt])
+}
+
+model ApprovalAction {
+  id        String           @id @default(uuid()) @db.VarChar(36)
+  requestId String           @db.VarChar(36)
+  actorId   String           @db.VarChar(36)
+  stage     ApprovalStage
+  decision  ApprovalDecision
+  comment   String           @db.Text
+  createdAt DateTime         @default(now())
+  request   LeaveRequest     @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  actor     User             @relation("ApprovalActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([requestId, createdAt])
+}
+
+model LeaveAttachment {
+  id           String       @id @default(uuid()) @db.VarChar(36)
+  requestId    String       @db.VarChar(36)
+  uploaderId   String       @db.VarChar(36)
+  filename     String       @db.VarChar(255)
+  mediaType    String       @db.VarChar(100)
+  byteSize     Int
+  storageKey   String       @db.VarChar(255)
+  createdAt    DateTime     @default(now())
+  request      LeaveRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  uploader     User         @relation("AttachmentUploader", fields: [uploaderId], references: [id], onDelete: Restrict)
+
+  @@index([requestId])
+}
+
+model InformationResponse {
+  id        String       @id @default(uuid()) @db.VarChar(36)
+  requestId String       @db.VarChar(36)
+  authorId  String       @db.VarChar(36)
+  response  String       @db.Text
+  createdAt DateTime     @default(now())
+  request   LeaveRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  author    User         @relation("InformationAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([requestId, createdAt])
+}
+
+model AuditEvent {
+  id            String        @id @default(uuid()) @db.VarChar(36)
+  actorId       String?       @db.VarChar(36)
+  leaveRequestId String?      @db.VarChar(36)
+  eventType     String        @db.VarChar(80)
+  requestId     String        @db.VarChar(36)
+  createdAt     DateTime      @default(now())
+  actor         User?         @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  leaveRequest  LeaveRequest? @relation(fields: [leaveRequestId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([leaveRequestId, createdAt])
+}
