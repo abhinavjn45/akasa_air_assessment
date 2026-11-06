@@ -32,6 +32,31 @@ body {
   margin: 0;
 }
 
+.remember-checkbox {
+  appearance: none;
+  display: grid;
+  place-content: center;
+  flex: none;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  background: white;
+}
+
+.remember-checkbox:checked {
+  border-color: var(--color-brand-orange);
+  background: var(--color-brand-orange);
+}
+
+.remember-checkbox:checked::after {
+  width: 5px;
+  height: 9px;
+  margin-top: -2px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  content: '';
+}
+
 button:focus-visible, a:focus-visible, input:focus-visible,
 select:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--color-focus-ring);

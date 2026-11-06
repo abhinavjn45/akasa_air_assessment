@@ -110,7 +110,7 @@ export default function LoginPage() {
               name="rememberMe"
               checked={rememberMe}
               onChange={(event) => setRememberMe(event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 accent-brand-orange focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+              className="remember-checkbox h-4 w-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
             />
             Remember me
           </label>
@@ -124,7 +124,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="min-h-12 w-full rounded-md bg-brand-orange px-4 py-3 text-sm font-semibold text-ink transition-colors hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-wait disabled:opacity-60"
+            className="min-h-12 w-full rounded-md bg-brand-orange px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:cursor-wait disabled:opacity-60"
           >
             {submitting ? 'Signing in…' : 'Log in'}
           </button>

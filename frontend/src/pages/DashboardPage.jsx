@@ -8,13 +8,21 @@ const labels = {
   PENDING_HOD: 'Pending HOD', APPROVED: 'Approved', REJECTED: 'Rejected',
 };
 const roleNames = { EMPLOYEE: 'Employee', MANAGER: 'Manager', HOD: 'HOD' };
-const button = 'inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-brand-orange px-4 py-2 text-sm font-semibold text-ink hover:bg-brand-hover disabled:opacity-50';
+const button = 'inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-brand-orange px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hover disabled:opacity-50';
 const field = 'mt-1.5 w-full rounded-md border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-brand-orange focus:ring-2 focus:ring-orange-100';
 const secondary = 'inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 py-2 text-sm font-medium text-ink hover:bg-canvas disabled:opacity-50';
 
 function prettyDate(value) {
   if (!value) return '—';
   return new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+}
+
+function todayInIndia() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type) => parts.find((part) => part.type === type).value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
 }
 
 function prettyDateTime(value) {
@@ -220,6 +228,7 @@ function CreateRequest({ onClose, onSaved }) {
   async function submit(event) {
     event.preventDefault();
     setError('');
+    if (dates.from < todayInIndia()) return setError('The start date cannot be before today.');
     if (days < 1) return setError('Choose an end date on or after the start date.');
     if (dates.from.slice(0, 4) !== dates.to.slice(0, 4)) return setError('Submit separate requests for different calendar years.');
     if (!selectedBalance || days > selectedBalance.availableDays) return setError('This request exceeds your available leave balance.');
@@ -262,8 +271,8 @@ function CreateRequest({ onClose, onSaved }) {
         {' '}{selectedBalance.approvedDays} approved · {selectedBalance.pendingDays} reserved for pending requests.
       </div>}
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="text-sm font-medium text-ink">From date<input className={field} type="date" name="fromDate" required onChange={(event) => setDates({ ...dates, from: event.target.value })} /></label>
-        <label className="text-sm font-medium text-ink">To date<input className={field} type="date" name="toDate" required onChange={(event) => setDates({ ...dates, to: event.target.value })} /></label>
+        <label className="text-sm font-medium text-ink">From date<input className={field} type="date" name="fromDate" min={todayInIndia()} required onChange={(event) => setDates({ ...dates, from: event.target.value })} /></label>
+        <label className="text-sm font-medium text-ink">To date<input className={field} type="date" name="toDate" min={dates.from && dates.from > todayInIndia() ? dates.from : todayInIndia()} required onChange={(event) => setDates({ ...dates, to: event.target.value })} /></label>
       </div>
       {days > 0 && <p className="text-sm text-muted">{days} consecutive {days === 1 ? 'day' : 'days'}{days > 3 ? ' · Supporting document and HOD approval required' : ''}</p>}
       <label className="block text-sm font-medium text-ink">Reason<textarea className={field} name="reason" rows="4" maxLength="2000" required placeholder="Briefly describe your reason" /></label>

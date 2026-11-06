@@ -25,7 +25,7 @@ const createBody = z.object({
   category: z.string().regex(/^[A-Z_]{1,32}$/),
   fromDate: date, toDate: date, reason: z.string().trim().min(1).max(2000),
   attachments: attachmentList,
-}).strip().refine((value) => value.fromDate <= value.toDate);
+}).strip();
 const actionBody = z.object({ decision: z.enum(['APPROVED', 'REJECTED', 'INFO_REQUESTED']), comment: z.string().trim().min(1).max(2000) }).strip();
 const responseBody = z.object({ response: z.string().trim().min(1).max(2000), attachments: attachmentList }).strip();
 const listQuery = z.object({
@@ -39,6 +39,14 @@ const listQuery = z.object({
   direction: z.enum(['asc', 'desc']).default('desc'),
 }).strip();
 const packet = (data, req) => ({ data, meta: { requestId: req.id } });
+
+function todayInIndia() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type) => parts.find((part) => part.type === type).value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
 
 async function canView(user, row) {
   if (user.role_code === 'EMPLOYEE') return row.employee_user_id === user.id;
@@ -104,6 +112,8 @@ router.get('/', validate({ body: empty, query: listQuery, params: empty }), asyn
 router.post('/', requireRole('EMPLOYEE'), validate({ body: createBody, query: empty, params: empty }), asyncHandler(async (req, res) => {
   req.setTimeout(120000);
   const { title, category, fromDate, toDate, reason, attachments } = req.validated.body;
+  if (fromDate < todayInIndia()) throw httpError(422, 'PAST_LEAVE_DATE', 'The start date cannot be before today.');
+  if (toDate < fromDate) throw httpError(422, 'INVALID_DATE_RANGE', 'The end date must be on or after the start date.');
   if (fromDate.slice(0, 4) !== toDate.slice(0, 4)) throw httpError(422, 'CROSS_YEAR_REQUEST', 'Submit separate requests for different calendar years.');
   const year = Number(fromDate.slice(0, 4));
   const days = (Date.parse(toDate + 'T00:00:00Z') - Date.parse(fromDate + 'T00:00:00Z')) / 86400000 + 1;
