@@ -7,6 +7,21 @@ import { env } from '../config/env.js';
 const credentialsPath = fileURLToPath(new URL('../../.seed-credentials.json', import.meta.url));
 const roles = ['EMPLOYEE', 'MANAGER', 'HOD'];
 
+async function seedAssessmentUsers(connection) {
+  const names = { EMPLOYEE: 'Aarav Sharma', MANAGER: 'Neha Mehta', HOD: 'Rajesh Kumar' };
+  for (const role of roles) {
+    const login = role.toLowerCase();
+    const email = `${login}@gmail.com`;
+    const [existing] = await connection.execute('SELECT id FROM users WHERE email = ?', [email]);
+    if (existing.length) continue;
+    const passwordHash = await bcrypt.hash(`${login}@123`, 12);
+    await connection.execute(
+      'INSERT INTO users (id, email, display_name, password_hash, role_code) VALUES (?, ?, ?, ?, ?)',
+      [randomUUID(), email, names[role], passwordHash, role],
+    );
+  }
+}
+
 async function loadOrCreateCredentials() {
   try {
     const records = JSON.parse(await readFile(credentialsPath, 'utf8'));
@@ -31,6 +46,10 @@ async function loadOrCreateCredentials() {
 }
 
 export async function seedDemoUsers(connection) {
+  if (env.NODE_ENV === 'production') {
+    await seedAssessmentUsers(connection);
+    return;
+  }
   if (env.NODE_ENV !== 'development') return;
 
   const [existing] = await connection.execute('SELECT role_code FROM lt_seed_accounts');
